@@ -1,58 +1,88 @@
-# 예약 알림톡 자동화 시스템
+# CLAUDE.md
 
-네이버 예약 메일에서 예약 정보를 추출하여 카카오 알림톡을 자동 발송하는 시스템
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 시스템 구성
+## 시스템 개요
 
-```
-[네이버 예약] → [Gmail] → [n8n] → [카카오 알림톡] → [예약자]
-```
-
-## 기술 스택
-
-| 구성요소 | 서비스 | 역할 |
-|---------|--------|------|
-| 메일 수신 | Gmail | 네이버 예약 알림 메일 수신 |
-| 자동화 엔진 | n8n (Synology) | 워크플로우 실행 |
-| 알림 발송 | 카카오 비즈메시지 | 알림톡 API |
-
-## 워크플로우
-
-1. **Gmail Trigger**: 새 메일 감지 (발신자: `noreply@naver.com`)
-2. **Filter**: 예약 관련 메일만 필터링
-3. **Extract**: 예약자명, 예약일시, 연락처 추출
-4. **Send**: 카카오 알림톡 발송
-
-## 디렉토리 구조
+네이버 스마트플레이스 예약을 크롤링하여 카카오 알림톡을 자동 발송하는 시스템
 
 ```
-message/
-├── CLAUDE.md          # 프로젝트 문서
-├── plan.md            # 상세 설계
-├── n8n/
-│   └── reservation-notification.json  # n8n 워크플로우
-└── docs/
-    ├── kakao-setup.md     # 카카오 비즈메시지 설정 가이드
-    └── n8n-workflow.md    # n8n 워크플로우 설명
+[n8n 스케줄 01:00] → [크롤러 API] → [네이버 스마트플레이스 크롤링] → [솔라피 알림톡 발송]
 ```
 
-## 필수 설정
+## 아키텍처
 
-### 1. Gmail API
-- Google Cloud Console에서 OAuth 2.0 설정
-- n8n에 Gmail 자격증명 등록
+### 크롤러 (crawler/)
+- **FastAPI** 서버 + **Playwright** 브라우저 자동화
+- 네이버 로그인 세션을 `naver_session.json`에 저장하여 재사용
+- Synology NAS Docker에서 실행 (포트 8080)
 
-### 2. 카카오 비즈메시지
-- 카카오 비즈니스 채널 생성
-- 알림톡 템플릿 등록 (검수 필요)
-- API 키 발급
+### n8n 워크플로우 (n8n/)
+- 매일 01:00 스케줄 트리거
+- 크롤러 API `/send-all-notifications` 호출
 
-### 3. n8n
-- Gmail 노드 설정
-- HTTP Request 노드로 카카오 API 호출
+### 알림톡 발송
+- **솔라피(Solapi)** API 사용 (HMAC-SHA256 인증)
+- 카카오 비즈메시지 채널 연동
 
-## 참고 링크
+## 주요 API 엔드포인트
 
-- [카카오 비즈니스](https://business.kakao.com/)
-- [카카오 알림톡 API 문서](https://developers.kakao.com/docs/latest/ko/message/rest-api)
-- [n8n 문서](https://docs.n8n.io/)
+| 엔드포인트 | 설명 |
+|-----------|------|
+| `GET /bookings/today` | 오늘 확정 예약 조회 |
+| `POST /send-all-notifications` | 오늘 예약 전체에 알림톡 발송 |
+| `GET /test-payload` | 발송 데이터 미리보기 |
+| `GET /logs/latest` | 최근 크롤링 결과 |
+| `GET /logs` | 크롤링 로그 목록 |
+| `POST /refresh` | 브라우저 세션 재초기화 |
+
+## 배포 명령어
+
+```bash
+# Synology SSH 접속
+ssh -p 55 tnwnrrl@tnwnrrl.synology.me
+
+# 크롤러 재배포
+cd "/volume1/Synology Driver/일산 신규 프로젝트/장치/message/crawler"
+sudo docker-compose down && sudo docker-compose up -d --build
+
+# 로그 확인
+sudo docker logs naver-booking-crawler --tail 50
+```
+
+## 로컬 테스트
+
+```bash
+# 오늘 예약 조회
+curl http://192.168.219.187:8080/bookings/today
+
+# 발송 데이터 확인
+curl http://192.168.219.187:8080/test-payload
+
+# 알림톡 발송 (실제 발송)
+curl -X POST http://192.168.219.187:8080/send-all-notifications
+```
+
+## 환경변수 (docker-compose.yml)
+
+- `BIZ_ID`: 네이버 스마트플레이스 업체 ID
+- `SOLAPI_API_KEY`, `SOLAPI_API_SECRET`: 솔라피 인증
+- `SOLAPI_SENDER`: 발신번호
+- `SOLAPI_PF_ID`: 카카오 채널 ID
+- `SOLAPI_TEMPLATE_ID`: 알림톡 템플릿 ID
+
+## 세션 관리
+
+네이버 로그인 세션이 만료되면 `naver_session.json`을 갱신해야 함:
+1. `save_session.py` 실행 또는 Playwright MCP로 로그인
+2. `storage_state` 저장
+3. Docker 컨테이너 재시작
+
+## 크롤링 패턴
+
+네이버 스마트플레이스 예약 목록 페이지에서 정규식으로 파싱:
+```
+확정 {이름} {전화번호} {예약번호} {시간} {상품명}
+```
+
+URL: `https://partner.booking.naver.com/bizes/{BIZ_ID}/booking-list-view?countFilter=CONFIRMED`
