@@ -1,0 +1,15 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Credentials (절대 커밋하지 않음)
+*.env
+credentials.json
+*_secret.json
+
+# Logs
+*.log

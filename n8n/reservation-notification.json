@@ -1,0 +1,219 @@
+{
+  "name": "네이버 예약 → 알림톡 발송",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "sender": "noreply@naver.com",
+          "subject": "예약"
+        },
+        "options": {
+          "markAsRead": true
+        }
+      },
+      "id": "gmail-trigger",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.subject }}",
+              "operation": "contains",
+              "value2": "예약"
+            }
+          ]
+        }
+      },
+      "id": "if-reservation",
+      "name": "예약 메일 필터",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 네이버 예약 메일 파싱\nconst mailBody = $input.first().json.text || $input.first().json.snippet || '';\nconst mailHtml = $input.first().json.html || '';\n\n// 정규식 패턴 (네이버 예약 메일 형식에 맞게 조정 필요)\nconst patterns = {\n  name: /예약자\\s*[:\\s]*([가-힣a-zA-Z]+)/,\n  date: /예약\\s*일시\\s*[:\\s]*([\\d]{4}[-.\\/][\\d]{1,2}[-.\\/][\\d]{1,2})/,\n  time: /예약\\s*시간\\s*[:\\s]*([\\d]{1,2}:[\\d]{2})/,\n  phone: /연락처\\s*[:\\s]*([\\d]{2,3}-?[\\d]{3,4}-?[\\d]{4})/,\n  content: /예약\\s*내용\\s*[:\\s]*(.+?)(?:\\n|$)/\n};\n\n// 정보 추출\nconst extractInfo = (text, pattern) => {\n  const match = text.match(pattern);\n  return match ? match[1].trim() : '';\n};\n\nconst searchText = mailBody + ' ' + mailHtml;\n\nconst result = {\n  reservationName: extractInfo(searchText, patterns.name),\n  reservationDate: extractInfo(searchText, patterns.date),\n  reservationTime: extractInfo(searchText, patterns.time),\n  phoneNumber: extractInfo(searchText, patterns.phone).replace(/-/g, ''),\n  reservationContent: extractInfo(searchText, patterns.content),\n  rawText: mailBody.substring(0, 500), // 디버깅용\n  subject: $input.first().json.subject,\n  receivedAt: new Date().toISOString()\n};\n\n// 필수 정보 검증\nif (!result.reservationName || !result.phoneNumber) {\n  result.parseError = true;\n  result.errorMessage = '예약자명 또는 연락처를 추출할 수 없습니다.';\n}\n\nreturn result;"
+      },
+      "id": "code-parse",
+      "name": "메일 파싱",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.parseError }}",
+              "value2": true,
+              "operation": "notEqual"
+            }
+          ]
+        }
+      },
+      "id": "if-valid",
+      "name": "파싱 성공 확인",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://kapi.kakao.com/v1/api/talk/friends/message/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "template_id",
+              "value": "={{ $env.KAKAO_TEMPLATE_ID }}"
+            },
+            {
+              "name": "template_args",
+              "value": "={{ JSON.stringify({ '예약자명': $json.reservationName, '예약일시': $json.reservationDate + ' ' + $json.reservationTime, '예약내용': $json.reservationContent || '예약' }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-kakao",
+      "name": "카카오 알림톡 발송",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1130, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "YOUR_KAKAO_CREDENTIAL_ID",
+          "name": "Kakao Admin Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "### 파싱 실패 알림\n\n**제목**: {{ $json.subject }}\n**에러**: {{ $json.errorMessage }}\n**원본 텍스트**:\n```\n{{ $json.rawText }}\n```",
+        "options": {}
+      },
+      "id": "error-notify",
+      "name": "파싱 실패 로그",
+      "type": "n8n-nodes-base.markdown",
+      "typeVersion": 1,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {},
+      "id": "no-op",
+      "name": "예약 아님 - 종료",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [690, 500]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "예약 메일 필터",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "예약 메일 필터": {
+      "main": [
+        [
+          {
+            "node": "메일 파싱",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "예약 아님 - 종료",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "메일 파싱": {
+      "main": [
+        [
+          {
+            "node": "파싱 성공 확인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "파싱 성공 확인": {
+      "main": [
+        [
+          {
+            "node": "카카오 알림톡 발송",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "파싱 실패 로그",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "예약",
+      "createdAt": "2025-01-27T00:00:00.000Z",
+      "updatedAt": "2025-01-27T00:00:00.000Z"
+    },
+    {
+      "name": "알림톡",
+      "createdAt": "2025-01-27T00:00:00.000Z",
+      "updatedAt": "2025-01-27T00:00:00.000Z"
+    }
+  ],
+  "pinData": {}
+}
