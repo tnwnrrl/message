@@ -13,3 +13,4 @@ credentials.json
 
 # Logs
 *.log
+crawler/naver_session.json
