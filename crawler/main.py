@@ -10,6 +10,7 @@ import hmac
 import hashlib
 import secrets
 import httpx
+import json
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
@@ -22,6 +23,7 @@ app = FastAPI(title="네이버 예약 크롤러")
 # 환경변수
 BIZ_ID = os.getenv("BIZ_ID", "1575275")
 STORAGE_PATH = os.getenv("STORAGE_PATH", "/app/naver_session.json")
+LOG_PATH = os.getenv("LOG_PATH", "/app/logs")
 
 # 솔라피 설정
 SOLAPI_API_KEY = os.getenv("SOLAPI_API_KEY", "")
@@ -71,6 +73,65 @@ class SendAllNotificationsResponse(BaseModel):
     success: int
     failed: int
     results: List[dict]
+
+
+class CrawlLogItem(BaseModel):
+    timestamp: str
+    date: str
+    count: int
+    bookings: List[dict]
+    send_results: Optional[List[dict]] = None
+
+
+def save_crawl_log(data: dict, send_results: Optional[List[dict]] = None):
+    """크롤링 결과를 로그 파일로 저장"""
+    log_dir = Path(LOG_PATH)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "date": date_str,
+        "count": data.get("count", 0),
+        "bookings": data.get("bookings", []),
+        "send_results": send_results
+    }
+
+    # 개별 로그 파일 저장
+    log_file = log_dir / f"crawl_{timestamp}.json"
+    with open(log_file, "w", encoding="utf-8") as f:
+        json.dump(log_entry, f, ensure_ascii=False, indent=2)
+
+    # 최근 로그 파일도 업데이트 (최근 결과 빠른 확인용)
+    latest_file = log_dir / "latest.json"
+    with open(latest_file, "w", encoding="utf-8") as f:
+        json.dump(log_entry, f, ensure_ascii=False, indent=2)
+
+    print(f"크롤링 결과 저장: {log_file}")
+    return str(log_file)
+
+
+def get_crawl_logs(limit: int = 10) -> List[dict]:
+    """저장된 크롤링 로그 목록 조회"""
+    log_dir = Path(LOG_PATH)
+    if not log_dir.exists():
+        return []
+
+    log_files = sorted(log_dir.glob("crawl_*.json"), reverse=True)[:limit]
+    logs = []
+
+    for log_file in log_files:
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                log_data = json.load(f)
+                log_data["filename"] = log_file.name
+                logs.append(log_data)
+        except Exception as e:
+            print(f"로그 파일 읽기 실패: {log_file} - {e}")
+
+    return logs
 
 
 def generate_solapi_auth():
@@ -261,11 +322,31 @@ async def get_bookings_today():
     """오늘 확정 예약 목록 조회"""
     try:
         result = await get_today_bookings()
+        # 크롤링 결과 저장
+        save_crawl_log(result)
         return TodayBookingsResponse(**result)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/logs")
+async def get_logs(limit: int = 10):
+    """크롤링 로그 목록 조회"""
+    logs = get_crawl_logs(limit)
+    return {"count": len(logs), "logs": logs}
+
+
+@app.get("/logs/latest")
+async def get_latest_log():
+    """최근 크롤링 결과 조회"""
+    latest_file = Path(LOG_PATH) / "latest.json"
+    if not latest_file.exists():
+        raise HTTPException(status_code=404, detail="로그가 없습니다.")
+
+    with open(latest_file, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 @app.post("/send-notification", response_model=SendNotificationResponse)
@@ -312,6 +393,9 @@ async def send_all_notifications():
             success_count += 1
         else:
             failed_count += 1
+
+    # 발송 결과 포함하여 로그 저장
+    save_crawl_log(bookings_data, send_results=results)
 
     return SendAllNotificationsResponse(
         total=len(bookings),

@@ -18,4 +18,6 @@ services:
     volumes:
       # 세션 파일 마운트
       - ./naver_session.json:/app/naver_session.json:ro
+      # 로그 폴더 마운트
+      - ./logs:/app/logs
     restart: unless-stopped
