@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 네이버 스마트플레이스 예약을 크롤링하여 카카오 알림톡을 자동 발송하는 시스템
 
 ```
-[n8n 스케줄 01:00] → [크롤러 API] → [네이버 스마트플레이스 크롤링] → [솔라피 알림톡 발송]
+[n8n 스케줄 01:00] → [크롤러 API] → [네이버 스마트플레이스 크롤링]
+  ├→ [솔라피 알림톡 즉시 발송] (오늘 전체 예약자 안내)
+  └→ [솔라피 알림톡 예약발송] (각 플레이타임 1분 전 리마인더)
 ```
 
 ## 아키텍처
@@ -69,7 +71,8 @@ curl -X POST http://192.168.219.187:8080/send-all-notifications
 - `SOLAPI_API_KEY`, `SOLAPI_API_SECRET`: 솔라피 인증
 - `SOLAPI_SENDER`: 발신번호
 - `SOLAPI_PF_ID`: 카카오 채널 ID
-- `SOLAPI_TEMPLATE_ID`: 알림톡 템플릿 ID
+- `SOLAPI_TEMPLATE_ID`: 알림톡 템플릿 ID (즉시 발송용)
+- `SOLAPI_REMINDER_TEMPLATE_ID`: 리마인더 알림톡 템플릿 ID (플레이타임 1분 전 예약발송)
 
 ## 세션 관리
 

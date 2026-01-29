@@ -11,7 +11,7 @@ import hashlib
 import secrets
 import httpx
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -31,6 +31,7 @@ SOLAPI_API_SECRET = os.getenv("SOLAPI_API_SECRET", "")
 SOLAPI_SENDER = os.getenv("SOLAPI_SENDER", "")
 SOLAPI_PF_ID = os.getenv("SOLAPI_PF_ID", "")
 SOLAPI_TEMPLATE_ID = os.getenv("SOLAPI_TEMPLATE_ID", "")
+SOLAPI_REMINDER_TEMPLATE_ID = os.getenv("SOLAPI_REMINDER_TEMPLATE_ID", "")
 
 # 오늘 확정 예약 페이지 URL
 CONFIRMED_BOOKINGS_URL = f"https://partner.booking.naver.com/bizes/{BIZ_ID}/booking-list-view?countFilter=CONFIRMED"
@@ -146,6 +147,86 @@ def generate_solapi_auth():
     ).hexdigest()
 
     return f"HMAC-SHA256 apiKey={SOLAPI_API_KEY}, date={date}, salt={salt}, signature={signature}"
+
+
+def parse_booking_time_to_datetime(booking_time: str) -> datetime:
+    """'오후 3:15' 형식을 오늘 날짜 datetime으로 변환"""
+    today = datetime.now()
+    match = re.match(r'(오전|오후)\s+(\d{1,2}):(\d{2})', booking_time)
+    if not match:
+        raise ValueError(f"시간 파싱 실패: {booking_time}")
+
+    period, hour, minute = match.group(1), int(match.group(2)), int(match.group(3))
+
+    if period == "오후" and hour != 12:
+        hour += 12
+    elif period == "오전" and hour == 12:
+        hour = 0
+
+    return today.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, booking_time: str) -> dict:
+    """플레이타임 1분 전 리마인더 알림톡 예약발송"""
+    if not SOLAPI_REMINDER_TEMPLATE_ID:
+        return {"success": False, "message": "리마인더 템플릿 ID가 설정되지 않았습니다."}
+
+    try:
+        play_dt = parse_booking_time_to_datetime(booking_time)
+    except ValueError as e:
+        return {"success": False, "message": str(e)}
+
+    scheduled_dt = play_dt - timedelta(minutes=1)
+
+    # 이미 지난 시간이면 스킵
+    if scheduled_dt <= datetime.now():
+        return {"success": False, "message": f"예약 시간이 이미 지남: {booking_time}"}
+
+    # 솔라피 scheduledDate 형식: 'YYYY-MM-DD HH:mm:ss'
+    scheduled_date = scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    today = datetime.now()
+    booking_datetime = f"{today.month}월 {today.day}일 {booking_time}"
+
+    auth_header = generate_solapi_auth()
+
+    payload = {
+        "message": {
+            "to": phone_number,
+            "from": SOLAPI_SENDER,
+            "kakaoOptions": {
+                "pfId": SOLAPI_PF_ID,
+                "templateId": SOLAPI_REMINDER_TEMPLATE_ID,
+                "variables": {
+                    "#{예약자명}": customer_name,
+                    "#{예약일시}": booking_datetime
+                }
+            }
+        },
+        "scheduledDate": scheduled_date
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                "https://api.solapi.com/messages/v4/send",
+                json=payload,
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json"
+                },
+                timeout=30.0
+            )
+
+            result = response.json()
+
+            if response.status_code == 200:
+                return {"success": True, "message": f"예약발송 등록 ({scheduled_date})", "detail": result}
+            else:
+                return {"success": False, "message": f"예약발송 실패: {response.status_code}", "detail": result}
+
+        except Exception as e:
+            return {"success": False, "message": f"예약발송 오류: {str(e)}"}
 
 
 async def send_alimtalk(phone_number: str, customer_name: str, booking_time: str) -> dict:
@@ -376,17 +457,26 @@ async def send_all_notifications():
         today = datetime.now()
         booking_datetime = f"{today.month}월 {today.day}일 {booking['booking_time']}"
 
+        # 1) 즉시 발송 (기존 템플릿)
         result = await send_alimtalk(
             phone_number=booking["phone_number"],
             customer_name=booking["customer_name"],
             booking_time=booking_datetime
         )
 
+        # 2) 플레이타임 1분 전 리마인더 예약발송 (새 템플릿)
+        reminder_result = await schedule_reminder_alimtalk(
+            phone_number=booking["phone_number"],
+            customer_name=booking["customer_name"],
+            booking_time=booking["booking_time"]
+        )
+
         results.append({
             "booking_id": booking["booking_id"],
             "customer_name": booking["customer_name"],
             "phone_number": booking["phone_number"],
-            **result
+            **result,
+            "reminder": reminder_result
         })
 
         if result["success"]:
@@ -430,9 +520,33 @@ async def test_payload():
                 }
             }
         }
+        # 리마인더 예약발송 페이로드
+        try:
+            play_dt = parse_booking_time_to_datetime(booking["booking_time"])
+            scheduled_dt = play_dt - timedelta(minutes=1)
+            scheduled_date = scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
+            reminder_payload = {
+                "message": {
+                    "to": booking["phone_number"],
+                    "from": SOLAPI_SENDER,
+                    "kakaoOptions": {
+                        "pfId": SOLAPI_PF_ID,
+                        "templateId": SOLAPI_REMINDER_TEMPLATE_ID,
+                        "variables": {
+                            "#{예약자명}": booking["customer_name"],
+                            "#{예약일시}": booking_datetime
+                        }
+                    }
+                },
+                "scheduledDate": scheduled_date
+            }
+        except ValueError:
+            reminder_payload = None
+
         payloads.append({
             "booking": booking,
-            "solapi_payload": payload
+            "solapi_payload": payload,
+            "reminder_payload": reminder_payload
         })
 
     return {
