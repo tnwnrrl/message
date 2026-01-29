@@ -8,32 +8,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 [n8n 스케줄 01:00] → [크롤러 API] → [네이버 스마트플레이스 크롤링]
-  ├→ [솔라피 알림톡 즉시 발송] (오늘 전체 예약자 안내)
-  └→ [솔라피 알림톡 예약발송] (각 플레이타임 1분 전 리마인더)
+  ├→ [솔라피 알림톡 즉시 발송] (기존 템플릿 - 오늘 전체 예약자 안내)
+  └→ [솔라피 알림톡 예약발송] (리마인더 템플릿 - 각 플레이타임 1분 전)
 ```
 
 ## 아키텍처
 
 ### 크롤러 (crawler/)
-- **FastAPI** 서버 + **Playwright** 브라우저 자동화
+- **FastAPI** 서버 (`main.py`) + **Playwright** 브라우저 자동화
 - 네이버 로그인 세션을 `naver_session.json`에 저장하여 재사용
-- Synology NAS Docker에서 실행 (포트 8080)
+- Synology NAS Docker에서 실행 (외부 8080 → 내부 8000)
+
+### 핵심 흐름 (crawler/main.py)
+1. **크롤링**: Playwright로 네이버 예약 페이지 접속 → 정규식으로 예약 데이터 파싱
+2. **즉시 발송**: `send_alimtalk()` → `SOLAPI_TEMPLATE_ID` 템플릿으로 즉시 발송
+3. **리마인더 예약발송**: `schedule_reminder_alimtalk()` → `SOLAPI_REMINDER_TEMPLATE_ID` 템플릿으로 솔라피 `scheduledDate` 파라미터를 사용해 플레이타임 1분 전 발송 예약
+4. **시간 변환**: `parse_booking_time_to_datetime()` → "오후 3:15" 형식을 datetime으로 변환
 
 ### n8n 워크플로우 (n8n/)
 - 매일 01:00 스케줄 트리거
-- 크롤러 API `/send-all-notifications` 호출
+- 크롤러 API `POST /send-all-notifications` 호출 (내부망 `http://192.168.219.187:8080`)
 
 ### 알림톡 발송
 - **솔라피(Solapi)** API 사용 (HMAC-SHA256 인증)
 - 카카오 비즈메시지 채널 연동
+- 이미 지난 시간의 예약은 리마인더 자동 스킵
 
 ## 주요 API 엔드포인트
 
 | 엔드포인트 | 설명 |
 |-----------|------|
 | `GET /bookings/today` | 오늘 확정 예약 조회 |
-| `POST /send-all-notifications` | 오늘 예약 전체에 알림톡 발송 |
-| `GET /test-payload` | 발송 데이터 미리보기 |
+| `POST /send-all-notifications` | 즉시 발송 + 리마인더 예약발송 일괄 처리 |
+| `GET /test-payload` | 즉시 발송 + 리마인더 페이로드 미리보기 |
 | `GET /logs/latest` | 최근 크롤링 결과 |
 | `GET /logs` | 크롤링 로그 목록 |
 | `POST /refresh` | 브라우저 세션 재초기화 |
@@ -58,7 +65,7 @@ sudo docker logs naver-booking-crawler --tail 50
 # 오늘 예약 조회
 curl http://192.168.219.187:8080/bookings/today
 
-# 발송 데이터 확인
+# 발송 데이터 확인 (리마인더 포함)
 curl http://192.168.219.187:8080/test-payload
 
 # 알림톡 발송 (실제 발송)
@@ -87,5 +94,6 @@ curl -X POST http://192.168.219.187:8080/send-all-notifications
 ```
 확정 {이름} {전화번호} {예약번호} {시간} {상품명}
 ```
+정규식: `r'확정\s+(\S+)\s+(01[0-9]-\d{4}-\d{4})\s+(\d{10})\s+(오[전후]\s+\d{1,2}:\d{2})\s+(\S+)'`
 
 URL: `https://partner.booking.naver.com/bizes/{BIZ_ID}/booking-list-view?countFilter=CONFIRMED`
