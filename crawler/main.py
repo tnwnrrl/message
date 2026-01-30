@@ -194,13 +194,18 @@ async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, book
         "message": {
             "to": phone_number,
             "from": SOLAPI_SENDER,
+            "text": """[신입 사원 최종 테스트 안내]
+귀하의 '다해조' 입사를 환영합니다.
+
+마지막 검증을 위해 귀하를 백석역으로 소환합니다.
+이곳에서 당신의 위기 대처 능력과 정보 수집 능력을 증명하십시오.
+
+🗝 테스트 시작 : 아래 테스트시작 버튼 클릭하여 시작 하세요.
+
+*회사 1층 로비 비밀번호 1379* 후 세로로 긴 버튼 눌러서 입장""",
             "kakaoOptions": {
                 "pfId": SOLAPI_PF_ID,
-                "templateId": SOLAPI_REMINDER_TEMPLATE_ID,
-                "variables": {
-                    "#{예약자명}": customer_name,
-                    "#{예약일시}": booking_datetime
-                }
+                "templateId": SOLAPI_REMINDER_TEMPLATE_ID
             }
         },
         "scheduledDate": scheduled_date
@@ -240,6 +245,18 @@ async def send_alimtalk(phone_number: str, customer_name: str, booking_time: str
         "message": {
             "to": phone_number,
             "from": SOLAPI_SENDER,
+            "text": """안녕하세요, #{예약자명}님!
+미스터리담의 첫번째 이야기 '백석담'을 예약해 주셔서 감사합니다.
+
+ 원활한 이용을 위해서 반드시 아래의 대기 장소 사진과 안내 사항을 확인해 주시기 바랍니다.
+• 일시: #{예약일시}
+• 대기 장소: 3호선 백석역 역사 내부 중앙
+• 해당 장소에서 대기하시면 진행 방법이 알림톡으로 도착합니다.
+
+⚠ 유의사항 (필독)
+1. 원활한 진행을 위해 시작 15분 전까지 사진 속 장소에 도착해 주세요.
+2. 정해진 시간에 도착하지 않으실 경우, 게임의 일부 연출이 생략된 채로 진행될 수 있습니다.
+3. 시작 시간 기준 20분 이상 지각 시, 예약은 환불 없이 자동 취소되오니 시간을 엄수해 주시기 바랍니다.""",
             "kakaoOptions": {
                 "pfId": SOLAPI_PF_ID,
                 "templateId": SOLAPI_TEMPLATE_ID,
@@ -510,6 +527,18 @@ async def test_payload():
             "message": {
                 "to": booking["phone_number"],
                 "from": SOLAPI_SENDER,
+                "text": """안녕하세요, #{예약자명}님!
+미스터리담의 첫번째 이야기 '백석담'을 예약해 주셔서 감사합니다.
+
+ 원활한 이용을 위해서 반드시 아래의 대기 장소 사진과 안내 사항을 확인해 주시기 바랍니다.
+• 일시: #{예약일시}
+• 대기 장소: 3호선 백석역 역사 내부 중앙
+• 해당 장소에서 대기하시면 진행 방법이 알림톡으로 도착합니다.
+
+⚠ 유의사항 (필독)
+1. 원활한 진행을 위해 시작 15분 전까지 사진 속 장소에 도착해 주세요.
+2. 정해진 시간에 도착하지 않으실 경우, 게임의 일부 연출이 생략된 채로 진행될 수 있습니다.
+3. 시작 시간 기준 20분 이상 지각 시, 예약은 환불 없이 자동 취소되오니 시간을 엄수해 주시기 바랍니다.""",
                 "kakaoOptions": {
                     "pfId": SOLAPI_PF_ID,
                     "templateId": SOLAPI_TEMPLATE_ID,
@@ -529,13 +558,18 @@ async def test_payload():
                 "message": {
                     "to": booking["phone_number"],
                     "from": SOLAPI_SENDER,
+                    "text": """[신입 사원 최종 테스트 안내]
+귀하의 '다해조' 입사를 환영합니다.
+
+마지막 검증을 위해 귀하를 백석역으로 소환합니다.
+이곳에서 당신의 위기 대처 능력과 정보 수집 능력을 증명하십시오.
+
+🗝 테스트 시작 : 아래 테스트시작 버튼 클릭하여 시작 하세요.
+
+*회사 1층 로비 비밀번호 1379* 후 세로로 긴 버튼 눌러서 입장""",
                     "kakaoOptions": {
                         "pfId": SOLAPI_PF_ID,
-                        "templateId": SOLAPI_REMINDER_TEMPLATE_ID,
-                        "variables": {
-                            "#{예약자명}": booking["customer_name"],
-                            "#{예약일시}": booking_datetime
-                        }
+                        "templateId": SOLAPI_REMINDER_TEMPLATE_ID
                     }
                 },
                 "scheduledDate": scheduled_date
