@@ -17,8 +17,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from typing import List, Optional
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 app = FastAPI(title="네이버 예약 크롤러")
+scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 
 # 환경변수
 BIZ_ID = os.getenv("BIZ_ID", "1575275")
@@ -166,30 +168,10 @@ def parse_booking_time_to_datetime(booking_time: str) -> datetime:
     return today.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
-async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, booking_time: str) -> dict:
-    """플레이타임 1분 전 리마인더 알림톡 예약발송"""
-    if not SOLAPI_REMINDER_TEMPLATE_ID:
-        return {"success": False, "message": "리마인더 템플릿 ID가 설정되지 않았습니다."}
-
-    try:
-        play_dt = parse_booking_time_to_datetime(booking_time)
-    except ValueError as e:
-        return {"success": False, "message": str(e)}
-
-    scheduled_dt = play_dt - timedelta(minutes=1)
-
-    # 이미 지난 시간이면 스킵
-    if scheduled_dt <= datetime.now():
-        return {"success": False, "message": f"예약 시간이 이미 지남: {booking_time}"}
-
-    # 솔라피 scheduledDate 형식: 'YYYY-MM-DD HH:mm:ss'
-    scheduled_date = scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-    today = datetime.now()
-    booking_datetime = f"{today.month}월 {today.day}일 {booking_time}"
-
+async def send_reminder_now(phone_number: str, booking_time: str):
+    """리마인더 알림톡 즉시 발송 (APScheduler에서 호출)"""
+    print(f"[리마인더 발송 시작] {phone_number} {booking_time}")
     auth_header = generate_solapi_auth()
-
     payload = {
         "message": {
             "to": phone_number,
@@ -205,12 +187,17 @@ async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, book
 *회사 1층 로비 비밀번호 1379* 후 세로로 긴 버튼 눌러서 입장""",
             "kakaoOptions": {
                 "pfId": SOLAPI_PF_ID,
-                "templateId": SOLAPI_REMINDER_TEMPLATE_ID
+                "templateId": SOLAPI_REMINDER_TEMPLATE_ID,
+                "buttons": [
+                    {
+                        "buttonType": "WL",
+                        "buttonName": "테스트 시작",
+                        "linkMo": "http://mysterydam.com/play/test.php"
+                    }
+                ]
             }
-        },
-        "scheduledDate": scheduled_date
+        }
     }
-
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
@@ -222,16 +209,40 @@ async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, book
                 },
                 timeout=30.0
             )
-
             result = response.json()
-
-            if response.status_code == 200:
-                return {"success": True, "message": f"예약발송 등록 ({scheduled_date})", "detail": result}
-            else:
-                return {"success": False, "message": f"예약발송 실패: {response.status_code}", "detail": result}
-
+            print(f"[리마인더 발송 완료] {phone_number} {booking_time} → {response.status_code}: {result}")
         except Exception as e:
-            return {"success": False, "message": f"예약발송 오류: {str(e)}"}
+            print(f"[리마인더 오류] {phone_number} {booking_time} → {e}")
+
+
+async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, booking_time: str) -> dict:
+    """플레이타임 1분 전 리마인더 알림톡 - APScheduler로 등록"""
+    if not SOLAPI_REMINDER_TEMPLATE_ID:
+        return {"success": False, "message": "리마인더 템플릿 ID가 설정되지 않았습니다."}
+
+    try:
+        play_dt = parse_booking_time_to_datetime(booking_time)
+    except ValueError as e:
+        return {"success": False, "message": str(e)}
+
+    scheduled_dt = play_dt - timedelta(minutes=1)
+
+    if scheduled_dt <= datetime.now():
+        return {"success": False, "message": f"이미 지난 시간: {booking_time}"}
+
+    job_id = f"reminder_{phone_number}_{play_dt.strftime('%H%M')}"
+
+    scheduler.add_job(
+        send_reminder_now,
+        trigger="date",
+        run_date=scheduled_dt,
+        args=[phone_number, booking_time],
+        id=job_id,
+        replace_existing=True,
+    )
+
+    print(f"[리마인더 등록] {phone_number} {booking_time} → {scheduled_dt.strftime('%H:%M:%S')}")
+    return {"success": True, "message": f"리마인더 등록 완료 ({scheduled_dt.strftime('%H:%M:%S')})", "job_id": job_id}
 
 
 async def send_alimtalk(phone_number: str, customer_name: str, booking_time: str) -> dict:
@@ -381,7 +392,9 @@ async def get_today_bookings() -> dict:
 
 @app.on_event("startup")
 async def startup_event():
-    """서버 시작 시 브라우저 초기화"""
+    """서버 시작 시 브라우저 초기화 + 스케줄러 시작"""
+    scheduler.start()
+    print("[스케줄러] 시작됨")
     try:
         await init_browser()
     except Exception as e:
@@ -391,8 +404,11 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """서버 종료 시 브라우저 정리"""
+    """서버 종료 시 브라우저 정리 + 스케줄러 종료"""
     global browser, context, playwright_instance
+
+    scheduler.shutdown()
+    print("[스케줄러] 종료됨")
 
     if context:
         await context.close()
@@ -569,7 +585,14 @@ async def test_payload():
 *회사 1층 로비 비밀번호 1379* 후 세로로 긴 버튼 눌러서 입장""",
                     "kakaoOptions": {
                         "pfId": SOLAPI_PF_ID,
-                        "templateId": SOLAPI_REMINDER_TEMPLATE_ID
+                        "templateId": SOLAPI_REMINDER_TEMPLATE_ID,
+                        "buttons": [
+                            {
+                                "buttonType": "WL",
+                                "buttonName": "테스트 시작",
+                                "linkMo": "http://mysterydam.com/play/test.php"
+                            }
+                        ]
                     }
                 },
                 "scheduledDate": scheduled_date
@@ -587,6 +610,30 @@ async def test_payload():
         "count": len(payloads),
         "payloads": payloads
     }
+
+
+@app.get("/reminders")
+async def get_reminders():
+    """등록된 리마인더 목록 조회"""
+    jobs = scheduler.get_jobs()
+    return {
+        "count": len(jobs),
+        "jobs": [
+            {
+                "id": job.id,
+                "run_date": str(job.next_run_time),
+                "args": job.args,
+            }
+            for job in jobs
+        ]
+    }
+
+
+@app.delete("/reminders")
+async def clear_reminders():
+    """등록된 리마인더 전체 삭제"""
+    scheduler.remove_all_jobs()
+    return {"message": "전체 리마인더 삭제 완료"}
 
 
 @app.post("/refresh")

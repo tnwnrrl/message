@@ -7,6 +7,7 @@ services:
     ports:
       - "8080:8000"
     environment:
+      - TZ=Asia/Seoul
       - BIZ_ID=1575275
       - STORAGE_PATH=/app/naver_session.json
       # 솔라피 설정
@@ -14,8 +15,8 @@ services:
       - SOLAPI_API_SECRET=CX2ZX9JHSI16XTEILYECH8A33UUGHLN7
       - SOLAPI_SENDER=07040276820
       - SOLAPI_PF_ID=KA01PF260128100337834OUnD1zKTMQ9
-      - SOLAPI_TEMPLATE_ID=KA01TP260128102231992Mbc16CYQTeb
-      - SOLAPI_REMINDER_TEMPLATE_ID=KA01TP260129055658425uHZ945U7CNM
+      - SOLAPI_TEMPLATE_ID=KA01TP260130071008831ht9BhJhp04k
+      - SOLAPI_REMINDER_TEMPLATE_ID=KA01TP260130070944781RCPU1JP65ey
     volumes:
       # 세션 파일 마운트
       - ./naver_session.json:/app/naver_session.json:ro
