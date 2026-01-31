@@ -227,9 +227,6 @@ async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, book
 
     scheduled_dt = play_dt - timedelta(minutes=1)
 
-    if scheduled_dt <= datetime.now():
-        return {"success": False, "message": f"이미 지난 시간: {booking_time}"}
-
     job_id = f"reminder_{phone_number}_{play_dt.strftime('%H%M')}"
 
     scheduler.add_job(
@@ -239,6 +236,7 @@ async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, book
         args=[phone_number, booking_time],
         id=job_id,
         replace_existing=True,
+        misfire_grace_time=3600,
     )
 
     print(f"[리마인더 등록] {phone_number} {booking_time} → {scheduled_dt.strftime('%H:%M:%S')}")
@@ -627,6 +625,17 @@ async def get_reminders():
             for job in jobs
         ]
     }
+
+
+@app.post("/reminders/register")
+async def register_reminder(request: SendNotificationRequest):
+    """단일 리마인더 등록"""
+    result = await schedule_reminder_alimtalk(
+        phone_number=request.phone_number,
+        customer_name=request.customer_name,
+        booking_time=request.booking_time
+    )
+    return result
 
 
 @app.delete("/reminders")
