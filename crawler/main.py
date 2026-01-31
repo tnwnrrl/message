@@ -17,10 +17,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from typing import List, Optional
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 app = FastAPI(title="네이버 예약 크롤러")
-scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 
 # 환경변수
 BIZ_ID = os.getenv("BIZ_ID", "1575275")
@@ -168,55 +165,8 @@ def parse_booking_time_to_datetime(booking_time: str) -> datetime:
     return today.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
-async def send_reminder_now(phone_number: str, booking_time: str):
-    """리마인더 알림톡 즉시 발송 (APScheduler에서 호출)"""
-    print(f"[리마인더 발송 시작] {phone_number} {booking_time}")
-    auth_header = generate_solapi_auth()
-    payload = {
-        "message": {
-            "to": phone_number,
-            "from": SOLAPI_SENDER,
-            "text": """[신입 사원 최종 테스트 안내]
-귀하의 '다해조' 입사를 환영합니다.
-
-마지막 검증을 위해 귀하를 백석역으로 소환합니다.
-이곳에서 당신의 위기 대처 능력과 정보 수집 능력을 증명하십시오.
-
-🗝 테스트 시작 : 아래 테스트시작 버튼 클릭하여 시작 하세요.
-
-*회사 1층 로비 비밀번호 1379* 후 세로로 긴 버튼 눌러서 입장""",
-            "kakaoOptions": {
-                "pfId": SOLAPI_PF_ID,
-                "templateId": SOLAPI_REMINDER_TEMPLATE_ID,
-                "buttons": [
-                    {
-                        "buttonType": "WL",
-                        "buttonName": "테스트 시작",
-                        "linkMo": "http://mysterydam.com/play/test.php"
-                    }
-                ]
-            }
-        }
-    }
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                "https://api.solapi.com/messages/v4/send",
-                json=payload,
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json"
-                },
-                timeout=30.0
-            )
-            result = response.json()
-            print(f"[리마인더 발송 완료] {phone_number} {booking_time} → {response.status_code}: {result}")
-        except Exception as e:
-            print(f"[리마인더 오류] {phone_number} {booking_time} → {e}")
-
-
 async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, booking_time: str) -> dict:
-    """플레이타임 1분 전 리마인더 알림톡 - APScheduler로 등록"""
+    """플레이타임 1분 전 리마인더 알림톡 - 솔라피 그룹 예약발송"""
     if not SOLAPI_REMINDER_TEMPLATE_ID:
         return {"success": False, "message": "리마인더 템플릿 ID가 설정되지 않았습니다."}
 
@@ -226,21 +176,66 @@ async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, book
         return {"success": False, "message": str(e)}
 
     scheduled_dt = play_dt - timedelta(minutes=1)
+    scheduled_iso = scheduled_dt.strftime("%Y-%m-%dT%H:%M:%S+09:00")
 
-    job_id = f"reminder_{phone_number}_{play_dt.strftime('%H%M')}"
+    headers = {
+        "Authorization": generate_solapi_auth(),
+        "Content-Type": "application/json"
+    }
 
-    scheduler.add_job(
-        send_reminder_now,
-        trigger="date",
-        run_date=scheduled_dt,
-        args=[phone_number, booking_time],
-        id=job_id,
-        replace_existing=True,
-        misfire_grace_time=3600,
-    )
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # 1) 그룹 생성
+            r1 = await client.post("https://api.solapi.com/messages/v4/groups", headers=headers, json={})
+            if r1.status_code != 200:
+                return {"success": False, "message": f"그룹 생성 실패: {r1.status_code}", "detail": r1.json()}
+            group_id = r1.json()["groupId"]
 
-    print(f"[리마인더 등록] {phone_number} {booking_time} → {scheduled_dt.strftime('%H:%M:%S')}")
-    return {"success": True, "message": f"리마인더 등록 완료 ({scheduled_dt.strftime('%H:%M:%S')})", "job_id": job_id}
+            # 2) 메시지 추가 (PUT)
+            headers["Authorization"] = generate_solapi_auth()
+            msg_payload = {
+                "messages": [
+                    {
+                        "to": phone_number,
+                        "from": SOLAPI_SENDER,
+                        "text": """[신입 사원 최종 테스트 안내]
+귀하의 '다해조' 입사를 환영합니다.
+
+마지막 검증을 위해 귀하를 백석역으로 소환합니다.
+이곳에서 당신의 위기 대처 능력과 정보 수집 능력을 증명하십시오.
+
+🗝 테스트 시작 : 아래 테스트시작 버튼 클릭하여 시작 하세요.
+
+*회사 1층 로비 비밀번호 1379* 후 세로로 긴 버튼 눌러서 입장""",
+                        "kakaoOptions": {
+                            "pfId": SOLAPI_PF_ID,
+                            "templateId": SOLAPI_REMINDER_TEMPLATE_ID,
+                            "buttons": [
+                                {
+                                    "buttonType": "WL",
+                                    "buttonName": "테스트 시작",
+                                    "linkMo": "http://mysterydam.com/play/test.php"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+            r2 = await client.put(f"https://api.solapi.com/messages/v4/groups/{group_id}/messages", headers=headers, json=msg_payload)
+            if r2.status_code != 200:
+                return {"success": False, "message": f"메시지 추가 실패: {r2.status_code}", "detail": r2.json()}
+
+            # 3) 예약발송 등록
+            headers["Authorization"] = generate_solapi_auth()
+            r3 = await client.post(f"https://api.solapi.com/messages/v4/groups/{group_id}/schedule", headers=headers, json={"scheduledDate": scheduled_iso})
+            if r3.status_code != 200:
+                return {"success": False, "message": f"예약발송 실패: {r3.status_code}", "detail": r3.json()}
+
+            print(f"[리마인더 예약발송] {phone_number} {booking_time} → {scheduled_dt.strftime('%H:%M:%S')} (groupId: {group_id})")
+            return {"success": True, "message": f"리마인더 예약발송 완료 ({scheduled_dt.strftime('%H:%M:%S')})", "group_id": group_id}
+
+        except Exception as e:
+            return {"success": False, "message": f"리마인더 오류: {str(e)}"}
 
 
 async def send_alimtalk(phone_number: str, customer_name: str, booking_time: str) -> dict:
@@ -390,9 +385,7 @@ async def get_today_bookings() -> dict:
 
 @app.on_event("startup")
 async def startup_event():
-    """서버 시작 시 브라우저 초기화 + 스케줄러 시작"""
-    scheduler.start()
-    print("[스케줄러] 시작됨")
+    """서버 시작 시 브라우저 초기화"""
     try:
         await init_browser()
     except Exception as e:
@@ -402,11 +395,8 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """서버 종료 시 브라우저 정리 + 스케줄러 종료"""
+    """서버 종료 시 브라우저 정리"""
     global browser, context, playwright_instance
-
-    scheduler.shutdown()
-    print("[스케줄러] 종료됨")
 
     if context:
         await context.close()
@@ -610,39 +600,15 @@ async def test_payload():
     }
 
 
-@app.get("/reminders")
-async def get_reminders():
-    """등록된 리마인더 목록 조회"""
-    jobs = scheduler.get_jobs()
-    return {
-        "count": len(jobs),
-        "jobs": [
-            {
-                "id": job.id,
-                "run_date": str(job.next_run_time),
-                "args": job.args,
-            }
-            for job in jobs
-        ]
-    }
-
-
 @app.post("/reminders/register")
 async def register_reminder(request: SendNotificationRequest):
-    """단일 리마인더 등록"""
+    """단일 리마인더 예약발송 등록"""
     result = await schedule_reminder_alimtalk(
         phone_number=request.phone_number,
         customer_name=request.customer_name,
         booking_time=request.booking_time
     )
     return result
-
-
-@app.delete("/reminders")
-async def clear_reminders():
-    """등록된 리마인더 전체 삭제"""
-    scheduler.remove_all_jobs()
-    return {"message": "전체 리마인더 삭제 완료"}
 
 
 @app.post("/refresh")
