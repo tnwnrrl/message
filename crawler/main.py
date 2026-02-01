@@ -176,7 +176,9 @@ async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, book
         return {"success": False, "message": str(e)}
 
     scheduled_dt = play_dt - timedelta(minutes=1)
-    scheduled_iso = scheduled_dt.strftime("%Y-%m-%dT%H:%M:%S+09:00")
+    # 솔라피는 scheduledDate를 UTC로 해석하므로 KST → UTC 변환 (-9시간)
+    scheduled_utc = scheduled_dt - timedelta(hours=9)
+    scheduled_iso = scheduled_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     headers = {
         "Authorization": generate_solapi_auth(),
@@ -557,7 +559,9 @@ async def test_payload():
         try:
             play_dt = parse_booking_time_to_datetime(booking["booking_time"])
             scheduled_dt = play_dt - timedelta(minutes=1)
-            scheduled_date = scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
+            # 솔라피는 scheduledDate를 UTC로 해석하므로 KST → UTC 변환 (-9시간)
+            scheduled_utc = scheduled_dt - timedelta(hours=9)
+            scheduled_date = scheduled_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
             reminder_payload = {
                 "message": {
                     "to": booking["phone_number"],
