@@ -149,8 +149,11 @@ def generate_solapi_auth():
 
 
 def parse_booking_time_to_datetime(booking_time: str) -> datetime:
-    """'오후 3:15' 형식을 오늘 날짜 datetime으로 변환"""
-    today = datetime.now()
+    """'오후 3:15' 형식을 오늘 날짜 datetime(KST)으로 변환"""
+    # UTC + 9시간 = KST (Docker 컨테이너가 UTC일 수 있으므로)
+    from datetime import timezone
+    KST = timezone(timedelta(hours=9))
+    today = datetime.now(KST)
     match = re.match(r'(오전|오후)\s+(\d{1,2}):(\d{2})', booking_time)
     if not match:
         raise ValueError(f"시간 파싱 실패: {booking_time}")
@@ -176,9 +179,17 @@ async def schedule_reminder_alimtalk(phone_number: str, customer_name: str, book
         return {"success": False, "message": str(e)}
 
     scheduled_dt = play_dt - timedelta(minutes=1)
-    # 솔라피는 scheduledDate를 UTC로 해석하므로 KST → UTC 변환 (-9시간)
-    scheduled_utc = scheduled_dt - timedelta(hours=9)
+    # KST → UTC 변환 (timezone-aware)
+    from datetime import timezone
+    now_kst = datetime.now(timezone(timedelta(hours=9)))
+    scheduled_utc = scheduled_dt.astimezone(timezone.utc)
     scheduled_iso = scheduled_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # 예약 시간이 현재보다 과거이거나 2분 이내면 스킵 (솔라피가 즉시 발송하는 것 방지)
+    remaining = (scheduled_dt - now_kst).total_seconds()
+    print(f"[리마인더 시간 검증] now={now_kst.strftime('%H:%M:%S')} scheduled={scheduled_dt.strftime('%H:%M:%S')} remaining={remaining:.0f}s scheduledDate={scheduled_iso}")
+    if remaining < 120:
+        return {"success": False, "message": f"리마인더 시간이 이미 지났거나 너무 가까움 (남은시간: {remaining:.0f}초, scheduled: {scheduled_dt.strftime('%H:%M:%S')})"}
 
     headers = {
         "Authorization": generate_solapi_auth(),
@@ -559,8 +570,9 @@ async def test_payload():
         try:
             play_dt = parse_booking_time_to_datetime(booking["booking_time"])
             scheduled_dt = play_dt - timedelta(minutes=1)
-            # 솔라피는 scheduledDate를 UTC로 해석하므로 KST → UTC 변환 (-9시간)
-            scheduled_utc = scheduled_dt - timedelta(hours=9)
+            # KST → UTC 변환 (timezone-aware)
+            from datetime import timezone
+            scheduled_utc = scheduled_dt.astimezone(timezone.utc)
             scheduled_date = scheduled_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
             reminder_payload = {
                 "message": {
