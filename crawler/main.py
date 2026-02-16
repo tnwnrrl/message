@@ -340,7 +340,9 @@ async def get_today_bookings() -> dict:
     if page is None:
         await init_browser()
 
-    today = datetime.now()
+    from datetime import timezone
+    KST = timezone(timedelta(hours=9))
+    today = datetime.now(KST)
     today_str = today.strftime("%Y-%m-%d")
 
     # 오늘 확정 예약 페이지로 이동
@@ -487,8 +489,10 @@ async def send_all_notifications():
     failed_count = 0
 
     for booking in bookings:
-        # 오늘 날짜 + 시간으로 예약일시 포맷
-        today = datetime.now()
+        # 오늘 날짜 + 시간으로 예약일시 포맷 (KST 기준)
+        from datetime import timezone
+        KST = timezone(timedelta(hours=9))
+        today = datetime.now(KST)
         booking_datetime = f"{today.month}월 {today.day}일 {booking['booking_time']}"
 
         # 1) 즉시 발송 (기존 템플릿)
@@ -537,7 +541,9 @@ async def test_payload():
 
     payloads = []
     for booking in bookings:
-        today = datetime.now()
+        from datetime import timezone
+        KST = timezone(timedelta(hours=9))
+        today = datetime.now(KST)
         booking_datetime = f"{today.month}월 {today.day}일 {booking['booking_time']}"
 
         payload = {
