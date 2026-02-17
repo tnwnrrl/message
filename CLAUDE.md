@@ -47,9 +47,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 배포 명령어
 
+> **필수 참고**: 배포 시 반드시 `ssh.md` 파일을 참조할 것. SSH 접속 정보, 비밀번호, expect를 통한 자동 배포 방법이 포함되어 있음.
+
+### Claude Code에서 자동 배포 (expect 사용)
+```bash
+# docker-compose 경로: /volume2/@appstore/Docker/usr/bin/docker-compose
+# sudo 실행 시 반드시 PATH에 Docker 경로 포함 필요
+
+expect -c '
+set timeout 300
+spawn sshpass -p "비밀번호" ssh -p 55 -tt tnwnrrl@192.168.219.187 "sudo env PATH=/volume2/@appstore/Docker/usr/bin:/usr/local/bin:/usr/bin:\$PATH /volume2/@appstore/Docker/usr/bin/docker-compose -f \"/volume1/Synology Driver/일산 신규 프로젝트/장치/message/crawler/docker-compose.yml\" up -d --build 2>&1"
+expect {
+    "Password:" { send "비밀번호\r"; exp_continue }
+    timeout { puts "TIMEOUT"; exit 1 }
+    eof
+}
+'
+```
+
+### 수동 배포
 ```bash
 # Synology SSH 접속
-ssh -p 55 tnwnrrl@tnwnrrl.synology.me
+ssh -p 55 tnwnrrl@192.168.219.187
 
 # 크롤러 재배포
 cd "/volume1/Synology Driver/일산 신규 프로젝트/장치/message/crawler"
@@ -58,6 +77,12 @@ sudo docker-compose down && sudo docker-compose up -d --build
 # 로그 확인
 sudo docker logs naver-booking-crawler --tail 50
 ```
+
+### 배포 주의사항
+- Synology NAS의 `docker-compose` 경로: `/volume2/@appstore/Docker/usr/bin/docker-compose`
+- `sudo` 환경에서 `docker` 명령어를 못 찾으므로 반드시 `env PATH=...` 로 경로 지정
+- `echo | sudo -S` 파이프 방식은 Synology에서 동작하지 않음 → `expect` 사용 필수
+- 비밀번호는 `ssh.md` 참조
 
 ## 로컬 테스트
 

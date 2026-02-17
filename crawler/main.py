@@ -88,11 +88,14 @@ def save_crawl_log(data: dict, send_results: Optional[List[dict]] = None):
     log_dir = Path(LOG_PATH)
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
+
+    timestamp = now.strftime("%Y%m%d_%H%M%S")
+    date_str = now.strftime("%Y-%m-%d")
 
     log_entry = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now.isoformat(),
         "date": date_str,
         "count": data.get("count", 0),
         "bookings": data.get("bookings", []),
