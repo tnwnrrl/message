@@ -11,7 +11,7 @@ import hashlib
 import secrets
 import httpx
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
