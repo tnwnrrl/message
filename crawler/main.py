@@ -516,6 +516,7 @@ async def send_all_notifications():
             "booking_id": booking["booking_id"],
             "customer_name": booking["customer_name"],
             "phone_number": booking["phone_number"],
+            "booking_time": booking["booking_time"],
             **result,
             "reminder": reminder_result
         })

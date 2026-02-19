@@ -31,6 +31,46 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://192.168.219.187:8080/bookings/today",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-get-bookings",
+      "name": "오늘 예약 조회",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://schedule.mysterydam.com/api/casting/reservations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer schedule-reservation-key-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ date: $json.date, bookings: $json.bookings }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-schedule-api",
+      "name": "캘린더 예약 등록",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [910, 300]
     }
   ],
   "connections": {
@@ -39,6 +79,28 @@
         [
           {
             "node": "전체 알림톡 발송",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "전체 알림톡 발송": {
+      "main": [
+        [
+          {
+            "node": "오늘 예약 조회",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "오늘 예약 조회": {
+      "main": [
+        [
+          {
+            "node": "캘린더 예약 등록",
             "type": "main",
             "index": 0
           }
